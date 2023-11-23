@@ -1,15 +1,16 @@
-[workspace]
-resolver = "1"
-
-[workspace.package]
+[package]
+name = "C Compiler"
+version = "0.1.0"
 authors = ["Lily McCabe <lily@lilymccabe.ca>"]
 edition = "2021"
 readme = "README.md"
 
 
 
-members = [
-  "lexer",
-  "parser",
-  
-]
+[features]
+unicode = []
+
+
+[dependencies]
+once_cell = "1.18.0"
+regex = "1.10.2"
