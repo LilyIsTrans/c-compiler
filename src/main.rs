@@ -1,3 +1,15 @@
+use c_compiler::tokens::tokenize;
+
 fn main() {
-    println!("Hello, world!");
+    let test = include_bytes!("../test_progs/ret2.c");
+
+    let tokens = tokenize(test);
+
+    print!("[");
+
+    for token in tokens {
+        print!("{}, ", token);
+    }
+
+    println!("]")
 }

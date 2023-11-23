@@ -1,5 +1,5 @@
-#[cfg(not(unicode))]
+#[cfg(not(feature = "unicode"))]
 pub type BasicText = [u8];
 
-#[cfg(unicode)]
+#[cfg(feature = "unicode")]
 pub type BasicText = str;
