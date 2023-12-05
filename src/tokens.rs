@@ -1,20 +1,44 @@
-use std::fmt::{write, Display, Write};
+use std::fmt::Display;
 
 use crate::common::BasicText;
-use log::warn;
+
+use tracing::instrument;
+use tracing::warn;
+
+use once_cell::sync::Lazy;
+
+#[cfg(not(feature = "unicode"))]
+use regex::bytes::Regex;
+#[cfg(feature = "unicode")]
+use regex::Regex;
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub enum Integer<'source> {
-    Decimal(&'source BasicText),
+pub enum IntegerKind {
+    Decimal,
+    Hexadecimal,
+    Binary,
 }
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
+pub struct Integer<'source> {
+    source: &'source BasicText,
+    kind: IntegerKind,
+}
+
+static DECIMAL_INTEGER_LITERAL: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A(0d)?[0-9]+").unwrap());
+static HEXADECIMAL_INTEGER_LITERAL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\A0x[0-9&&a-f&&A-F]+").unwrap());
+static BINARY_INTEGER_LITERAL: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A0b[01]+").unwrap());
 
 impl<'source> Display for Integer<'source> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            #[cfg(not(feature = "unicode"))]
-            Integer::Decimal(string) => string.escape_ascii().fmt(f),
-            #[cfg(feature = "unicode")]
-            Integer::Decimal(string) => string.fmt(f),
+        #[cfg(not(feature = "unicode"))]
+        {
+            self.source.escape_ascii().fmt(f)
+        }
+        #[cfg(feature = "unicode")]
+        {
+            self.source.fmt(f)
         }
     }
 }
@@ -38,6 +62,9 @@ pub enum Keyword {
     Return,
 }
 
+static KEYWORD_INT: Lazy<Regex> = Lazy::new(|| Regex::new(r"\Aint").unwrap());
+static KEYWORD_RETURN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\Areturn").unwrap());
+
 impl Display for Keyword {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -60,6 +87,11 @@ pub enum Pair {
     Braces(PairSide),
 }
 
+static OPEN_BRACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\{").unwrap());
+static CLOSE_BRACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\}").unwrap());
+static OPEN_PAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\(").unwrap());
+static CLOSE_PAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\)").unwrap());
+
 impl Display for Pair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -75,6 +107,11 @@ impl Display for Pair {
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct Identifier<'source>(&'source BasicText);
+
+#[cfg(feature = "unicode")]
+static IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A[a-zA-Z]\w*").unwrap());
+#[cfg(not(feature = "unicode"))]
+static IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A[a-zA-Z](?-u:\w)*").unwrap());
 
 impl<'source> Display for Identifier<'source> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -93,6 +130,8 @@ pub enum Token<'source> {
     Identifier(Identifier<'source>),
     Semicolon,
 }
+
+static SEMICOLON: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A;").unwrap());
 
 impl<'source> Display for Token<'source> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -130,26 +169,10 @@ impl<'source> From<Identifier<'source>> for Token<'source> {
     }
 }
 
-use once_cell::sync::Lazy;
+pub type TokenStream<'source> = Vec<Token<'source>>;
 
-#[cfg(not(feature = "unicode"))]
-use regex::bytes::Regex;
-#[cfg(feature = "unicode")]
-use regex::Regex;
-
-pub fn tokenize<'source>(source: &'source BasicText) -> Vec<Token<'source>> {
-    static OPEN_BRACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\{").unwrap());
-    static CLOSE_BRACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\}").unwrap());
-    static OPEN_PAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\(").unwrap());
-    static CLOSE_PAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\)").unwrap());
-    static SEMICOLON: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A;").unwrap());
-    static KEYWORD_INT: Lazy<Regex> = Lazy::new(|| Regex::new(r"\Aint").unwrap());
-    static KEYWORD_RETURN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\Areturn").unwrap());
-    #[cfg(feature = "unicode")]
-    static IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A[a-zA-Z]\w*").unwrap());
-    #[cfg(not(feature = "unicode"))]
-    static IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A[a-zA-Z](?-u:\w)*").unwrap());
-    static DECIMAL_INTEGER_LITERAL: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A[0-9]+").unwrap());
+#[instrument]
+pub fn tokenize<'source>(source: &'source BasicText) -> TokenStream<'source> {
     #[cfg(feature = "unicode")]
     static WHITESPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\A\s+").unwrap());
     #[cfg(not(feature = "unicode"))]
@@ -185,9 +208,21 @@ pub fn tokenize<'source>(source: &'source BasicText) -> Vec<Token<'source>> {
             text = &text[mat.end()..];
         } else if let Some(mat) = DECIMAL_INTEGER_LITERAL.find(text) {
             #[cfg(not(feature = "unicode"))]
-            stream.push(Literal::Integer(Integer::Decimal(mat.as_bytes())).into());
+            stream.push(
+                Literal::Integer(Integer {
+                    kind: IntegerKind::Decimal,
+                    source: mat.as_bytes(),
+                })
+                .into(),
+            );
             #[cfg(feature = "unicode")]
-            stream.push(Literal::Integer(Integer::Decimal(mat.as_str())).into());
+            stream.push(
+                Literal::Integer(Integer {
+                    kind: IntegerKind::Decimal,
+                    source: mat.as_str(),
+                })
+                .into(),
+            );
             text = &text[mat.end()..];
         } else if let Some(mat) = IDENTIFIER.find(text) {
             #[cfg(not(feature = "unicode"))]
